@@ -62,7 +62,7 @@ class SwiModel:
         if np.isscalar(var):
             var = var * np.ones(shape)
         if isinstance(var, list):
-            var = np.reshape(np.array(list), shape)
+            var = np.reshape(np.array(var), shape)
         else:
             if var.ndim == 1:
                 if shape[1] == 1:
