@@ -347,7 +347,7 @@ class SwiModel:
         sol[0] = self.hfini.flatten()
         hs = self.hsini.flatten()
         for istep in range(self.nstep):
-            solnew = sol[istep] + 0.1 # alter a bit to start?
+            solnew = sol[istep] #+ 0.1 # alter a bit to start?
             for jiter in range(maxiter):
                 sol[istep + 1] = solnew
                 R = self.step_fresh(solnew, sol[istep], hs, hs)
