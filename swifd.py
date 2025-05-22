@@ -63,9 +63,11 @@ class SwiModel:
             var = var * np.ones(shape)
         if isinstance(var, list):
             var = np.reshape(np.array(var), shape)
-        else:
-            if var.ndim == 1:
-                if shape[1] == 1:
+        else: # is array
+            if var.ndim == 1: # input is 1D array
+                if shape[1] == 1: # make column vector
+                    var = np.reshape(var, shape)
+                elif shape[0] == 1: # only one layer
                     var = np.reshape(var, shape)
                 else:
                     var = var[:, np.newaxis] * np.ones(shape)
