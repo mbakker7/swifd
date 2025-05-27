@@ -62,10 +62,12 @@ class SwiModel:
         if np.isscalar(var):
             var = var * np.ones(shape)
         if isinstance(var, list):
-            var = np.reshape(np.array(list), shape)
-        else:
-            if var.ndim == 1:
-                if shape[1] == 1:
+            var = np.reshape(np.array(var), shape)
+        else: # is array
+            if var.ndim == 1: # input is 1D array
+                if shape[1] == 1: # make column vector
+                    var = np.reshape(var, shape)
+                elif shape[0] == 1: # only one layer
                     var = np.reshape(var, shape)
                 else:
                     var = var[:, np.newaxis] * np.ones(shape)
@@ -347,7 +349,7 @@ class SwiModel:
         sol[0] = self.hfini.flatten()
         hs = self.hsini.flatten()
         for istep in range(self.nstep):
-            solnew = sol[istep] + 0.1 # alter a bit to start?
+            solnew = sol[istep] #+ 0.1 # alter a bit to start?
             for jiter in range(maxiter):
                 sol[istep + 1] = solnew
                 R = self.step_fresh(solnew, sol[istep], hs, hs)
