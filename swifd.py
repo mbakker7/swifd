@@ -188,8 +188,8 @@ class SwiModel:
                 Qfixed[ilay + 1] -= Qml[ilay, jcol]
                 Qml[ilay, jcol] = 0
             if ilay > 0:
-                Qfixed[ilay - 1, jcol] += Qm[ilay - 1, jcol]
-                Qm[ilay - 1, jcol] = 0
+                Qfixed[ilay - 1] += Qml[ilay - 1, jcol]
+                Qml[ilay - 1, jcol] = 0
             Qsource_array[ilay, jcol] = 0 # no source on constant head cells   
         Qsource = np.sum(Qsource_array, axis=1)
         Qbot[:-1] = np.sum(Qml, axis=1)
@@ -300,8 +300,8 @@ class SwiModel:
                 Qfixed[ilay + 1] -= Qml[ilay, jcol]
                 Qml[ilay, jcol] = 0
             if ilay > 0:
-                Qfixed[ilay - 1, jcol] += Qm[ilay - 1, jcol]
-                Qm[ilay - 1, jcol] = 0
+                Qfixed[ilay - 1] += Qml[ilay - 1, jcol]
+                Qml[ilay - 1, jcol] = 0
             Qsource_array[ilay, jcol] = 0 # no source on constant head cells   
         Qsource = np.sum(Qsource_array, axis=1)
         Qbot[:-1] = np.sum(Qml, axis=1)
