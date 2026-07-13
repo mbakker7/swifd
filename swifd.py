@@ -46,7 +46,7 @@ class SwiModel:
     #     self.alphaf = self.rhof / (self.rhos - self.rhof)
     #     self.alphas = self.rhos / (self.rhos - self.rhof)
 
-    def aquifer(self, k, S, Se, zb, zt, rhof, rhos):
+    def aquifer(self, k, S, Se, zb, zt, rhof, rhos, kvoverkh=1):
         self.k = self.set_array(k, (self.nlay, 1))
         self.S = self.set_array(S, (self.nlay, 1))
         self.Se = self.set_array(Se, (self.nlay, 1))
@@ -57,6 +57,7 @@ class SwiModel:
         self.rhos = rhos
         self.alphaf = self.rhof / (self.rhos - self.rhof)
         self.alphas = self.rhos / (self.rhos - self.rhof)
+        self.kv = self.k * kvoverkh
 
     def set_array(self, var, shape):
         if np.isscalar(var):
@@ -115,7 +116,8 @@ class SwiModel:
         C = np.zeros((self.nlay, self.ncol))
         C[:, :-1] = self.k * bf / self.delx
         if self.nlay > 1:
-            c = 0.5 * self.H[:-1] / self.k[:-1] + 0.5 * self.H[1:] / self.k[1:]
+            c = 0.5 * self.H[:-1] / self.kv[:-1] + 0.5 * self.H[1:] / self.kv[1:]
+            #c = 1e10 * np.ones(self.H[1:].shape).
             D = self.delx / c
             # adjust for vertical connection
             zeta = self.alphas * hs - self.alphaf * hf
