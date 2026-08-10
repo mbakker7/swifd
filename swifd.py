@@ -93,7 +93,7 @@ class SwiModel:
         self.fixedf = fixedf
         self.fixeds = fixeds
         
-    def cond_storage_fresh(self, hf, hfold, hs, hsold):
+    def cond_storage_fresh(self, hf, hfold, hs, hsold, correction):
         hf = np.reshape(hf, (self.nlay, self.ncol))
         hfold = np.reshape(hfold, (self.nlay, self.ncol)) 
         hs = np.reshape(hs, (self.nlay, self.ncol))
@@ -119,24 +119,29 @@ class SwiModel:
             c = 0.5 * self.H[:-1] / self.kv[:-1] + 0.5 * self.H[1:] / self.kv[1:]
             #c = 1e10 * np.ones(self.H[1:].shape).
             D = self.delx / c
+            # adjust for vertical connection
+            if correction:
+                zeta = self.alphas * hs - self.alphaf * hf
+                above = zeta[:-1] > self.zb[:-1]
+                down = hf[:-1] > hf[1:]
+                D[above & down] *= 1e-6
         else:
             D = None
         return C, D, storage1 + storage2
         
-    def jac(self, x, hold, *args, fun=None):
+    def jac(self, x, hold, *args, fun=None, **kwargs):
         dp = 1e-6
         ntot = len(x)
         d = dp * np.eye(ntot)
         rv = np.zeros((ntot, ntot))
-        funx = fun(x, hold, *args)
+        funx = fun(x, hold, *args, **kwargs)
         for n in range(ntot):
-            rv[:, n] = (fun(x + d[n], hold, *args) - 
-                        fun(x - d[n], hold, *args)) / (2 * dp)
+            rv[:, n] = (fun(x + d[n], hold, *args, **kwargs) - 
+                        fun(x - d[n], hold, *args, **kwargs)) / (2 * dp)
         return rv
         
-    def step_fresh(self, hf, hfold, hs, hsold):
-        C, D, storage = self.cond_storage_fresh(hf, hfold, hs, hsold)
-        #
+    def step_fresh(self, hf, hfold, hs, hsold, correction=True):
+        C, D, storage = self.cond_storage_fresh(hf, hfold, hs, hsold, correction)
         A = np.diag(C.ravel()[:-1], 1) + np.diag(C.ravel()[:-1], -1)
         if self.nlay > 1:
             A += np.diag(D.ravel(), self.ncol) + np.diag(D.ravel(), -self.ncol) 
@@ -243,8 +248,16 @@ class SwiModel:
         bs = np.maximum(1e-3, bs) # make sure at least 1 mm
         C = np.zeros((self.nlay, self.ncol))
         C[:, :-1] = self.k * bs / self.delx
-        c = 0.5 * self.H[:-1] / self.kv[:-1] + 0.5 * self.H[1:] / self.kv[1:]
-        D = self.delx / c
+        if self.nlay > 1:
+            c = 0.5 * self.H[:-1] / self.kv[:-1] + 0.5 * self.H[1:] / self.kv[1:]
+            D = self.delx / c
+            # adjust for vertical connection
+            zeta = self.alphas * hs - self.alphaf * hf
+            below = zeta[1:] < self.zt[1:] - 0.001
+            up = hs[1:] > hs[:-1]
+            D[below & up] *= 1e-6
+        else:
+            D = None
         return C, D, storage1 + storage2
 
     def step_salt(self, hs, hsold, hf, hfold):
@@ -335,13 +348,13 @@ class SwiModel:
             rvdic[key] = (pd.DataFrame(data=rv[ilay], columns=budget.index))
         return rvdic
 
-    def step_fresh_salt(self, solnew, solold):
+    def step_fresh_salt(self, solnew, solold, correction=True):
         # solnew is vector with fresh heads and then zeta
         hf = solnew[:self.ncell]
         hs = solnew[self.ncell:]
         hfold = solold[:self.ncell]
         hsold = solold[self.ncell:]
-        fresh_sol = self.step_fresh(hf, hfold, hs, hsold)
+        fresh_sol = self.step_fresh(hf, hfold, hs, hsold, correction)
         salt_sol = self.step_salt(hs, hsold, hf, hfold)
         return np.hstack((fresh_sol, salt_sol))
 
@@ -356,7 +369,11 @@ class SwiModel:
                 sol[istep + 1] = solnew
                 R = self.step_fresh(solnew, sol[istep], hs, hs)
                 J = self.jac(solnew, sol[istep], hs, hs, fun=self.step_fresh)
+                #print('J')
+                #print(J)
                 solnew = np.linalg.solve(J, -R + J @ solnew)
+                #print('jiter: ', jiter)
+                #print(solnew)
                 if np.max(np.abs(sol[istep + 1] - solnew)) < htol:
                     if not silent:
                         print(f'iterations: {jiter + 1}')
@@ -374,24 +391,26 @@ class SwiModel:
         zetasol = np.minimum(zetasol, self.zt)
         return hfsol, zetasol
 
-    def simulate(self, maxiter=100, silent=False, test=False):
-        htol = 1e-6 # absolute convergence criterium for heads
+    def simulate(self, maxiter=100, silent=False, test=False, relax=1.0, htol=1e-6, correction=True):
+        #htol = 1e-6 # absolute convergence criterium for heads
         sol = np.zeros((self.nstep + 1, 2 * self.ncell))
         sol[0, :self.ncell] = self.hfini.flatten()
         sol[0, self.ncell:] = self.hsini.flatten()
         for istep in range(self.nstep):
             solnew = sol[istep]
-            #print(solnew)
             for jiter in range(maxiter):
-                #print('istep, jiter ', istep, jiter)
                 sol[istep + 1] = solnew
-                R = self.step_fresh_salt(solnew, sol[istep])
-                J = self.jac(solnew, sol[istep], fun=self.step_fresh_salt)
+                R = self.step_fresh_salt(solnew, sol[istep], correction=correction)
+                J = self.jac(solnew, sol[istep], fun=self.step_fresh_salt, correction=correction)
                 if test:
                     np.save('Rmat.npy', R)
                     np.save('Jmat.npy', J)
-                solnew = np.linalg.solve(J, -R + J @ solnew)
-                if np.max(np.abs(sol[istep + 1] - solnew)) < htol:
+                delsol = np.linalg.solve(J, -R)
+                solnew = sol[istep + 1] + delsol * relax
+                #solnew = np.linalg.solve(J, -R + J @ solnew)
+                Rnew = self.step_fresh_salt(solnew, sol[istep], correction=correction)
+                #print(f'istep, jiter: {istep, jiter}, {np.sum(np.abs(Rnew)):.8f}, {np.sum(np.abs(R)):.8f}')
+                if np.sum(np.abs(Rnew)) < htol:
                     if not silent:
                         print(f'iterations: {jiter + 1}')
                     sol[istep + 1] = solnew
