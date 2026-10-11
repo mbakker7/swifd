@@ -92,6 +92,17 @@ class SwiModel:
     def set_fixed(self, fixedf=[], fixeds=[]):
         self.fixedf = fixedf
         self.fixeds = fixeds
+
+    def fsmooth(self, z, a, b, z0, z1):
+        '''
+        Returns:
+        z >= z1: a
+        z <= z0: b
+        0 <= z <= z1: b + (a - b) * (3 * u^2 - 2 * u^3)
+        where u = (z - z0) / (z1 - z0)
+        '''
+        u = np.clip((z - z0) / (z1 - z0), 0.0, 1.0)
+        return b + (a - b) * u ** 2 * (3 - 2 * u)
         
     def cond_storage_fresh(self, hf, hfold, hs, hsold, correction):
         hf = np.reshape(hf, (self.nlay, self.ncol))
@@ -120,11 +131,19 @@ class SwiModel:
             #c = 1e10 * np.ones(self.H[1:].shape).
             D = self.delx / c
             # adjust for vertical connection
+            # if correction:
+            #     zeta = self.alphas * hs - self.alphaf * hf
+            #     above = zeta[:-1] > self.zb[:-1]
+            #     down = hf[:-1] > hf[1:]
+            #     D[above & down] *= 1e-6
+            #     #D[above & down] = 0.0
             if correction:
-                zeta = self.alphas * hs - self.alphaf * hf
-                above = zeta[:-1] > self.zb[:-1]
                 down = hf[:-1] > hf[1:]
-                D[above & down] *= 1e-6
+                #delzsmooth = 0.01
+                zeta = self.alphas * hs - self.alphaf * hf
+                z = zeta[:-1] - self.zb[:-1]
+                smooth = self.fsmooth(z, a=1e-6, b=1, z0=0, z1=0.01)
+                D[down] *= smooth[down]
         else:
             D = None
         return C, D, storage1 + storage2
@@ -140,7 +159,7 @@ class SwiModel:
                         fun(x - d[n], hold, *args, **kwargs)) / (2 * dp)
         return rv
         
-    def step_fresh(self, hf, hfold, hs, hsold, correction=True):
+    def step_fresh(self, hf, hfold, hs, hsold, correction):
         C, D, storage = self.cond_storage_fresh(hf, hfold, hs, hsold, correction)
         A = np.diag(C.ravel()[:-1], 1) + np.diag(C.ravel()[:-1], -1)
         if self.nlay > 1:
@@ -231,7 +250,7 @@ class SwiModel:
             rvdic[key] = (pd.DataFrame(data=rv[ilay], columns=budget.index))
         return rvdic
                             
-    def cond_storage_salt(self, hs, hsold, hf, hfold):
+    def cond_storage_salt(self, hs, hsold, hf, hfold, correction):
         hf = np.reshape(hf, (self.nlay, self.ncol))
         hfold = np.reshape(hfold, (self.nlay, self.ncol)) 
         hs = np.reshape(hs, (self.nlay, self.ncol))
@@ -252,16 +271,23 @@ class SwiModel:
             c = 0.5 * self.H[:-1] / self.kv[:-1] + 0.5 * self.H[1:] / self.kv[1:]
             D = self.delx / c
             # adjust for vertical connection
-            zeta = self.alphas * hs - self.alphaf * hf
-            below = zeta[1:] < self.zt[1:] - 0.001
-            up = hs[1:] > hs[:-1]
-            D[below & up] *= 1e-6
+            # zeta = self.alphas * hs - self.alphaf * hf
+            # below = zeta[1:] < self.zt[1:] - 0.001
+            # up = hs[1:] > hs[:-1]
+            # D[below & up] *= 1e-6
+            if correction:
+                up = hs[1:] > hs[:-1]
+                delzsmooth = 0.01
+                zeta = self.alphas * hs - self.alphaf * hf
+                z = self.zt[1:] - zeta[1:]
+                smooth = self.fsmooth(z, a=1e-6, b=1, z0=0, z1=0.01)
+                D[up] *= smooth[up]
         else:
             D = None
         return C, D, storage1 + storage2
 
-    def step_salt(self, hs, hsold, hf, hfold):
-        C, D, storage = self.cond_storage_salt(hs, hsold, hf, hfold)
+    def step_salt(self, hs, hsold, hf, hfold, correction):
+        C, D, storage = self.cond_storage_salt(hs, hsold, hf, hfold, correction)
         A = np.diag(C.ravel()[:-1], 1) + np.diag(C.ravel()[:-1], -1)
         if self.nlay > 1:
             A += np.diag(D.ravel(), self.ncol) + np.diag(D.ravel(), -self.ncol) 
@@ -355,10 +381,10 @@ class SwiModel:
         hfold = solold[:self.ncell]
         hsold = solold[self.ncell:]
         fresh_sol = self.step_fresh(hf, hfold, hs, hsold, correction)
-        salt_sol = self.step_salt(hs, hsold, hf, hfold)
+        salt_sol = self.step_salt(hs, hsold, hf, hfold, correction)
         return np.hstack((fresh_sol, salt_sol))
 
-    def simulate_freshonly(self, maxiter=100, silent=False):
+    def simulate_freshonly(self, maxiter=100, silent=False, correction=True):
         htol = 1e-6 # absolute convergence criterium for heads
         sol = np.zeros((self.nstep + 1, self.nlay * self.ncol))
         sol[0] = self.hfini.flatten()
@@ -367,8 +393,8 @@ class SwiModel:
             solnew = sol[istep] #+ 0.1 # alter a bit to start?
             for jiter in range(maxiter):
                 sol[istep + 1] = solnew
-                R = self.step_fresh(solnew, sol[istep], hs, hs)
-                J = self.jac(solnew, sol[istep], hs, hs, fun=self.step_fresh)
+                R = self.step_fresh(solnew, sol[istep], hs, hs, correction)
+                J = self.jac(solnew, sol[istep], hs, hs, fun=self.step_fresh, correction=correction)
                 #print('J')
                 #print(J)
                 solnew = np.linalg.solve(J, -R + J @ solnew)
@@ -391,13 +417,17 @@ class SwiModel:
         zetasol = np.minimum(zetasol, self.zt)
         return hfsol, zetasol
 
-    def simulate(self, maxiter=100, silent=False, test=False, relax=1.0, htol=1e-6, correction=True):
+    def simulate(self, maxiter=100, silent=False, test=False, relax=1.0, htol=1e-6, correction=True, printprogress=False):
         #htol = 1e-6 # absolute convergence criterium for heads
         sol = np.zeros((self.nstep + 1, 2 * self.ncell))
         sol[0, :self.ncell] = self.hfini.flatten()
         sol[0, self.ncell:] = self.hsini.flatten()
+        fac = 1.05
+        nbacktrack = 10
+        back = 0.2
         for istep in range(self.nstep):
             solnew = sol[istep]
+            error = 1e6  # current error
             for jiter in range(maxiter):
                 sol[istep + 1] = solnew
                 R = self.step_fresh_salt(solnew, sol[istep], correction=correction)
@@ -409,8 +439,18 @@ class SwiModel:
                 solnew = sol[istep + 1] + delsol * relax
                 #solnew = np.linalg.solve(J, -R + J @ solnew)
                 Rnew = self.step_fresh_salt(solnew, sol[istep], correction=correction)
+                for ibacktrack in range(nbacktrack):
+                    if np.sqrt(np.mean(Rnew ** 2)) > fac * error:
+                        solnew = sol[istep + 1] + delsol * back ** (ibacktrack + 1)
+                        Rnew = self.step_fresh_salt(solnew, sol[istep], correction=correction)
+                        if printprogress:
+                            print('ibacktrack, RMSE_Rnew: ', ibacktrack, np.sqrt(np.mean(Rnew ** 2)))
+                    else:
+                        break
+                error = np.sqrt(np.mean(Rnew ** 2))
                 #print(f'istep, jiter: {istep, jiter}, {np.sum(np.abs(Rnew)):.8f}, {np.sum(np.abs(R)):.8f}')
-                if np.sum(np.abs(Rnew)) < htol:
+                #if np.sum(np.abs(Rnew)) < htol:
+                if np.mean(np.abs(Rnew)) < htol:
                     if not silent:
                         print(f'iterations: {jiter + 1}')
                     sol[istep + 1] = solnew
