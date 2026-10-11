@@ -423,12 +423,12 @@ class SwiModel:
         zetasol = np.minimum(zetasol, self.zt)
         return hfsol, zetasol
 
-    def simulate(self, maxiter=100, silent=False, test=False, relax=1.0, htol=1e-6, correction=True, printprogress=False, upstream=True):
+    def simulate(self, maxiter=100, silent=False, test=False, relax=1.0, htol=1e-6, correction=True, printprogress=False, upstream=True, backtracktol=1.1):
         #htol = 1e-6 # absolute convergence criterium for heads
         sol = np.zeros((self.nstep + 1, 2 * self.ncell))
         sol[0, :self.ncell] = self.hfini.flatten()
         sol[0, self.ncell:] = self.hsini.flatten()
-        fac = 1.05
+        fac = backtracktol
         nbacktrack = 10
         back = 0.2
         for istep in range(self.nstep):
@@ -456,6 +456,8 @@ class SwiModel:
                 error = np.sqrt(np.mean(Rnew ** 2))
                 #print(f'istep, jiter: {istep, jiter}, {np.sum(np.abs(Rnew)):.8f}, {np.sum(np.abs(R)):.8f}')
                 #if np.sum(np.abs(Rnew)) < htol:
+                if silent == 'verbose':
+                    print('istep, jiter, error: ', istep, jiter, np.mean(np.abs(Rnew)))
                 if np.mean(np.abs(Rnew)) < htol:
                     if not silent:
                         print(f'iterations: {jiter + 1}')
@@ -464,6 +466,7 @@ class SwiModel:
                 if jiter == maxiter - 1:
                     print(f'zero based time step: {istep}')
                     print(f'Error: convergence not reached after maxiter={maxiter} iterations')
+                    print(f'Error: ', error)
                     sol[istep + 1] = solnew
                     break
         hfsol = sol[:, :self.ncell]
